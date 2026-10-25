@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#172b41">
+  <title>Gato al vuelo · Juego pixel art</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="game.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="./index.html">GATO<span>AL VUELO</span></a><span class="badge">UN GATO. NUEVE VIDAS. UN INTENTO.</span></header>
+    <section class="arcade" aria-label="Gato al vuelo">
+      <div class="hud"><span>PUNTOS <b id="score">0</b></span><span>★ RÉCORD <b id="best">0</b></span></div>
+      <div class="playfield">
+        <canvas id="game" width="432" height="640" aria-label="Juego: evita las tuberías. Usa Espacio, clic o toque para volar."></canvas>
+        <div id="overlay" class="overlay">
+          <div class="card">
+            <span class="eyebrow" id="eyebrow">PEQUEÑAS ALAS, GRANDES SALTOS</span>
+            <h1 id="title">Gato al<br><em>vuelo.</em></h1>
+            <p id="message">Desafía la gravedad.<br>Encuentra tu hueco entre las tuberías.</p>
+            <button id="play" type="button">Jugar <span>↗</span></button>
+            <small id="hint">ESPACIO · CLIC · TOQUE</small>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar"><span><i></i> LISTO PARA DESPEGAR</span><span>01 / INFINITO</span></div>
+    </section>
+    <footer><span>Pulsa <kbd>ESPACIO</kbd> para impulsarte</span><span>Hecho para jugar, una vez más. ↗</span></footer>
+    <p class="sr-only" id="announcement" aria-live="polite"></p>
+  </main>
+</body>
+</html>
