@@ -2,12 +2,19 @@
   'use strict';
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const ui = Object.fromEntries(['score', 'best', 'overlay', 'title', 'message', 'play', 'eyebrow', 'hint', 'announcement', 'lives'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['score', 'best', 'overlay', 'title', 'message', 'play', 'eyebrow', 'hint', 'announcement', 'lives', 'level', 'progress', 'coins', 'charges'].map(id => [id, document.getElementById(id)]));
   const MAX_LIVES = 3, HIT_PAUSE = 0.4, INVULNERABILITY = 1.5;
   const WORLD_SCALE = 0.85, PIPE_WIDTH = Math.round(68 * 0.8), PIPE_INTERVAL = 1.7;
   const W = canvas.width / WORLD_SCALE, H = canvas.height / WORLD_SCALE;
   const FLOOR = 568 / WORLD_SCALE;
   const GRAVITY = 1400, IMPULSE = -440, SPEED = 160, GAP = 174;
+  const COINS_PER_LIFE = 10, COIN_EVERY = 1, COIN_RADIUS = 11;
+  const BASE_TARGET = 15, TARGET_INCREMENT = 5, SPEED_INCREMENT = 6, MAX_SPEED = 220;
+  const VICTORY_DURATION = 1.5;
+  let level = 1, levelScore = 0, coinCount = 0, charges = 0, generated = 0;
+  let victoryTime = 0, confetti = [], sparkles = [], healTime = 0;
+  const target = () => BASE_TARGET + (level - 1) * TARGET_INCREMENT;
+  const speed = () => Math.min(MAX_SPEED, SPEED + (level - 1) * SPEED_INCREMENT);
   const STEP = 1 / 120;
   let state = 'ready', score = 0, best = 0, pipes = [], spawn = 0, clock = 0, distance = 0;
   let lives = MAX_LIVES, hitRemaining = 0, immune = 0, particles = [];
@@ -19,13 +26,61 @@
   function showLives() {
     ui.lives.replaceChildren(...Array.from({ length: MAX_LIVES }, (_, i) => {
       const heart = document.createElement('span');
-      heart.className = `heart${i < lives ? '' : ' lost'}`;
+      heart.className = `heart${i < lives ? '' : ' lost'}${healTime > 0 && i === lives - 1 ? ' restored' : ''}`;
       heart.setAttribute('aria-hidden', 'true');
       return heart;
     }));
     ui.lives.setAttribute('aria-label', `${lives} de ${MAX_LIVES} vidas`);
   }
   showLives();
+  function refreshHud() {
+    ui.score.textContent = score; ui.level.textContent = level;
+    ui.progress.textContent = `${levelScore} / ${target()}`;
+    ui.coins.textContent = `${coinCount} · ${coinCount % COINS_PER_LIFE}/${COINS_PER_LIFE}`;
+    ui.charges.textContent = charges ? `+${charges} recuperación${charges === 1 ? '' : 'es'}` : 'Sin cargas';
+  }
+  function saveBest() {
+    if (score <= best) return;
+    best = score; ui.best.textContent = best;
+    try { localStorage.setItem('gato-al-vuelo-best', String(best)); } catch { /* Session record remains available. */ }
+  }
+  function useCharges() {
+    while (charges > 0 && lives < MAX_LIVES) { charges--; lives++; healTime = 0.8; }
+    showLives(); refreshHud();
+  }
+  function collectCoin(coin) {
+    if (coin.collected) return;
+    coin.collected = true; coinCount++;
+    sparkles.push({ x: coin.x, y: coin.y, time: 0.45 });
+    if (coinCount % COINS_PER_LIFE === 0) charges++;
+    useCharges();
+  }
+  function victory() {
+    if (state !== 'playing') return;
+    state = 'victory'; victoryTime = 0; saveBest();
+    confetti = Array.from({ length: 64 }, () => ({ x: Math.random() * W, y: Math.random() * H * 0.55,
+      vx: (Math.random() - 0.5) * 90, vy: 40 + Math.random() * 100,
+      color: ['#ffcf70', '#f39598', '#a2cf74', '#def2df'][Math.floor(Math.random() * 4)] }));
+    ui.eyebrow.textContent = '¡NIVEL COMPLETADO!';
+    ui.title.innerHTML = '¡Nivel<br><em>completado!</em>';
+    ui.title.classList.add('victory-title');
+    ui.message.textContent = `Nivel ${level} · ${levelScore} puntos · Total: ${score} · Monedas: ${coinCount}`;
+    ui.play.textContent = 'Siguiente nivel'; ui.hint.textContent = 'TU PRÓXIMO VUELO TE ESPERA';
+    ui.overlay.hidden = false; ui.play.focus({ preventScroll: true });
+    ui.announcement.textContent = `¡Nivel ${level} completado! ${levelScore} puntos.`;
+  }
+  function nextLevel() {
+    if (state !== 'victory') return;
+    level++; levelScore = 0; pipes = []; spawn = 0.8; generated = 0; immune = 0;
+    particles = []; sparkles = []; confetti = []; cat.y = 265; cat.vy = 0;
+    state = 'transition'; refreshHud();
+    ui.title.classList.remove('victory-title');
+    ui.eyebrow.textContent = 'UN NUEVO DESAFÍO'; ui.title.textContent = `NIVEL ${level}`;
+    ui.message.textContent = `Objetivo: ${target()} puntos. Pulsa para despegar.`;
+    ui.play.textContent = 'Despegar'; ui.hint.textContent = 'ESPACIO · CLIC · TOQUE';
+    ui.announcement.textContent = `Nivel ${level}. Esperando para despegar.`;
+  }
+  refreshHud();
   function damage() {
     if (immune > 0 || state !== 'playing') return;
     lives--; showLives(); state = 'hit'; hitRemaining = HIT_PAUSE;
@@ -39,30 +94,34 @@
     // Move every upcoming obstacle together: preserve their spacing and scores.
     const upcoming = pipes.filter(p => p.x + PIPE_WIDTH + 5 >= cat.x - 14);
     const nearest = upcoming.reduce((a, p) => Math.min(a, p.x), Infinity);
-    const safeX = cat.x + SPEED * (INVULNERABILITY + 0.5);
-    if (nearest < safeX) for (const p of upcoming) p.x += safeX - nearest;
+    const safeX = cat.x + speed() * (INVULNERABILITY + 0.5);
+    if (nearest < safeX) for (const p of upcoming) {
+      p.x += safeX - nearest; if (p.coin) p.coin.x += safeX - nearest;
+    }
+    if (upcoming.length) {
+      const farthest = Math.max(...upcoming.map(p => p.x));
+      spawn = Math.max(spawn, (farthest - (W + 10)) / speed() + PIPE_INTERVAL);
+    }
     cat.y = FLOOR * 0.46; cat.vy = IMPULSE * 0.6;
     immune = INVULNERABILITY; state = 'playing';
   }
   function flap() { cat.vy = IMPULSE; }
   function start() {
+    level = 1; levelScore = 0; coinCount = 0; charges = 0; generated = 0; healTime = 0; sparkles = []; confetti = [];
+    ui.title.classList.remove('victory-title');
     state = 'playing'; lives = MAX_LIVES; hitRemaining = 0; immune = 0; particles = []; showLives(); score = 0; pipes = []; spawn = 0.8; distance = 0;
     cat.y = 265; cat.vy = 0; accumulator = 0;
-    ui.score.textContent = '0'; ui.overlay.hidden = true;
+    refreshHud(); ui.overlay.hidden = true;
     ui.announcement.textContent = 'Partida iniciada.';
     flap();
   }
   function end() {
     if (state !== 'hit') return;
     state = 'over'; deathTime = performance.now();
-    if (score > best) {
-      best = score;
-      try { localStorage.setItem('gato-al-vuelo-best', String(best)); } catch { /* Keep the record for this session. */ }
-    }
-    ui.best.textContent = best;
+    saveBest();
     ui.eyebrow.textContent = 'UN DESCANSO Y OTRO INTENTO';
     ui.title.innerHTML = 'Fin del<br><em>vuelo.</em>';
-    ui.message.textContent = `Puntos: ${score} · Récord: ${best}`;
+    ui.message.textContent = `Nivel ${level} · Total: ${score} · Monedas: ${coinCount} · Récord: ${best}`;
     ui.play.innerHTML = 'Volver a jugar <span>↗</span>';
     ui.hint.textContent = 'CADA SALTO ES UNA NUEVA OPORTUNIDAD';
     ui.overlay.hidden = false;
@@ -70,35 +129,56 @@
     ui.play.focus({ preventScroll: true });
   }
   function action() {
-    if (state === 'playing') flap();
+    if (state === 'transition') { state = 'playing'; ui.overlay.hidden = true; flap(); }
+    else if (state === 'playing') flap();
     else if (state === 'ready' || (state === 'over' && performance.now() - deathTime > 350)) start();
   }
-  ui.play.addEventListener('click', start);
+  ui.play.addEventListener('click', () => {
+    if (state === 'victory') nextLevel();
+    else if (state === 'transition') action();
+    else if (state === 'ready' || state === 'over') start();
+  });
   canvas.addEventListener('pointerdown', event => { event.preventDefault(); action(); });
   window.addEventListener('keydown', event => {
     if (event.code !== 'Space' || event.repeat) return;
+    if (state === 'victory' && document.activeElement === ui.play) return;
     event.preventDefault(); action();
   });
   document.addEventListener('visibilitychange', () => { last = null; accumulator = 0; });
 
   function update(dt) {
     clock += dt;
+    healTime = Math.max(0, healTime - dt);
+    for (const effect of sparkles) effect.time -= dt;
+    sparkles = sparkles.filter(effect => effect.time > 0);
+    if (state === 'victory') {
+      const active = Math.min(dt, Math.max(0, VICTORY_DURATION - victoryTime));
+      victoryTime = Math.min(VICTORY_DURATION, victoryTime + dt);
+      for (const p of confetti) { p.x += p.vx * active; p.y += p.vy * active; }
+      return;
+    }
     if (state === 'hit') {
       hitRemaining = Math.max(0, hitRemaining - dt);
       for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 180 * dt; }
-      if (hitRemaining <= 0) { if (lives === 0) end(); else recover(); }
+      if (hitRemaining <= 0) { useCharges(); if (lives === 0) end(); else recover(); }
       return;
     }
     if (state !== 'playing') return;
     immune = Math.max(0, immune - dt);
-    distance += SPEED * dt;
+    distance += speed() * dt;
     cat.vy += GRAVITY * dt; cat.y += cat.vy * dt;
     spawn -= dt;
     if (spawn <= 0) {
-      pipes.push({ x: W + 10, top: 95 + Math.random() * 230, passed: false });
+      const pipe = { x: W + 10, top: 95 + Math.random() * 230, passed: false };
+      generated++;
+      if (generated % COIN_EVERY === 0) pipe.coin = { x: pipe.x + PIPE_WIDTH / 2,
+        y: pipe.top + GAP / 2 + (Math.random() - 0.5) * 40, collected: false };
+      pipes.push(pipe);
       spawn += PIPE_INTERVAL;
     }
-    for (const pipe of pipes) pipe.x -= SPEED * dt;
+    for (const pipe of pipes) {
+      pipe.x -= speed() * dt; if (pipe.coin) pipe.coin.x -= speed() * dt;
+    }
     // A compact hitbox keeps the decorative tail and ears forgiving.
     const left = cat.x - 14, right = cat.x + 14, top = cat.y - 14, bottom = cat.y + 15;
     if (immune <= 0 && (top <= 0 || bottom >= FLOOR || pipes.some(p => right > p.x - 5 && left < p.x + PIPE_WIDTH + 5 && (top < p.top || bottom > p.top + GAP)))) {
@@ -109,8 +189,10 @@
       if (cat.y === 15 || cat.y === FLOOR - 16) cat.vy = 0;
     }
     for (const pipe of pipes) {
+      if (pipe.coin && !pipe.coin.collected && Math.abs(cat.x - pipe.coin.x) < 14 + COIN_RADIUS && Math.abs(cat.y - pipe.coin.y) < 15 + COIN_RADIUS) collectCoin(pipe.coin);
       if (!pipe.passed && pipe.x + PIPE_WIDTH + 5 < left) {
-        pipe.passed = true; score++; ui.score.textContent = score;
+        pipe.passed = true; score++; levelScore++; refreshHud(); saveBest();
+        if (levelScore >= target()) { victory(); return; }
       }
     }
     pipes = pipes.filter(p => p.x > -PIPE_WIDTH - 10);
@@ -135,7 +217,7 @@
     segment(p.top + GAP, FLOOR - p.top - GAP, p.top + GAP);
   }
   function drawCat() {
-    const y = state === 'ready' ? cat.y + Math.sin(clock * 3) * 7 : cat.y;
+    const y = state === 'victory' ? cat.y - Math.abs(Math.sin(victoryTime * Math.PI * 4)) * 22 : state === 'ready' ? cat.y + Math.sin(clock * 3) * 7 : cat.y;
     ctx.save();
     if ((state === 'hit' && Math.floor(hitRemaining * 24) % 2) || (immune > 0 && Math.floor(immune * 12) % 2)) ctx.globalAlpha = 0.35;
     ctx.translate(cat.x + (state === 'hit' ? Math.sin(hitRemaining * 65) * 4 : 0), y);
@@ -163,7 +245,15 @@
       rect(x, FLOOR - 83 - (i % 3) * 15, 48, 90, '#80b5a2');
       rect(x + 8, FLOOR - 91 - (i % 3) * 15, 30, 10, '#80b5a2');
     }
-    pipes.forEach(drawPipe); drawCat();
+    pipes.forEach(drawPipe);
+    for (const pipe of pipes) {
+      const c = pipe.coin;
+      if (!c || c.collected) continue;
+      ctx.save(); ctx.translate(c.x, c.y); ctx.scale(0.35 + Math.abs(Math.cos(clock * 4)) * 0.65, 1);
+      rect(-8, -11, 16, 22, '#bd8738'); rect(-11, -7, 22, 14, '#bd8738');
+      rect(-7, -8, 14, 16, '#ffcf70'); rect(-3, -5, 4, 10, '#fff4ce'); ctx.restore();
+    }
+    drawCat();
     rect(0, FLOOR, W, 6, '#35574a'); rect(0, FLOOR + 6, W, 12, '#a2cf74');
     rect(0, FLOOR + 18, W, 5, '#698b4f'); rect(0, FLOOR + 23, W, H - FLOOR - 23, '#dec591');
     for (let i = -1; i < Math.ceil(W / 22) + 1; i++) {
@@ -171,6 +261,20 @@
       rect(x, FLOOR + 7, 10, 4, '#d5e69a'); rect(x + 8, FLOOR + 35, 5, 4, '#b69c75');
       rect(x, FLOOR + 56, 7, 3, '#c1a77c');
     }
+    for (const effect of sparkles) {
+      ctx.globalAlpha = effect.time / 0.45;
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4, radius = (0.45 - effect.time) * 100;
+        rect(effect.x + Math.cos(angle) * radius, effect.y + Math.sin(angle) * radius, 4, 4, '#ffcf70');
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (healTime > 0) {
+      ctx.save(); ctx.globalAlpha = Math.min(1, healTime * 3);
+      ctx.font = 'bold 24px monospace'; ctx.fillStyle = '#f39598';
+      ctx.fillText('♥ +1', cat.x - 25, cat.y - 35 - (0.8 - healTime) * 35); ctx.restore();
+    }
+    if (state === 'victory') for (const p of confetti) rect(p.x, p.y, 5, 7, p.color);
     if (state === 'hit') {
       ctx.globalAlpha = hitRemaining / HIT_PAUSE;
       for (const p of particles) rect(p.x, p.y, 5, 5, '#f39598');

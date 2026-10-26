@@ -6,7 +6,7 @@ const vm = require('node:vm');
 function game() {
   const nodes = {};
   const node = id => nodes[id] ||= { textContent: '', hidden: false, children: [],
-    setAttribute() {}, addEventListener() {}, focus() {}, replaceChildren(...items) { this.children = items; } };
+    classList: {add() {}, remove() {}}, setAttribute() {}, addEventListener() {}, focus() {}, replaceChildren(...items) { this.children = items; } };
   const context = new Proxy({}, { get: () => () => {} });
   Object.assign(node('game'), { width: 432, height: 640, getContext: () => context });
   const storage = new Map();
@@ -15,8 +15,8 @@ function game() {
     performance: { now: () => 1000 }, requestAnimationFrame() {}, Math };
   const source = fs.readFileSync(require('node:path').join(__dirname, '../game.js'), 'utf8')
     .replace('  requestAnimationFrame(frame);\n})();', `  globalThis.testGame = {
-      start, update, render, action, frame, cat,
-      get data() { return {state, lives, score, immune, distance, spawn, pipes, W, H, FLOOR, GAP, PIPE_WIDTH, WORLD_SCALE}; },
+      start, update, render, action, frame, cat, collectCoin, nextLevel, victory,
+      get data() { return {state, lives, score, level, levelScore, coinCount, charges, victoryTime, confetti, immune, distance, spawn, pipes, W, H, FLOOR, GAP, PIPE_WIDTH, WORLD_SCALE}; },
       setPipes(value) { pipes = value; },
       setScore(value) { score = value; },
       setImmune(value) { immune = value; }
@@ -66,4 +66,48 @@ test('generation, scoring once, and fixed timestep at 30/60/120 FPS', () => {
     return g.cat.y;
   });
   assert.ok(Math.max(...results)-Math.min(...results)<4);
+});
+test('coins collected once, banked rewards, maximum lives and last-life rescue', () => {
+  const {g}=game();g.start();
+  const coin={x:108,y:265,collected:false};g.collectCoin(coin);g.collectCoin(coin);assert.equal(g.data.coinCount,1);
+  for(let i=0;i<29;i++)g.collectCoin({x:108,y:265,collected:false});
+  assert.equal(g.data.coinCount,30);assert.equal(g.data.charges,3);assert.equal(g.data.lives,3);
+  for(let i=0;i<3;i++){
+    g.setImmune(0);g.cat.y=1;g.update(1/120);advance(g,.42);
+    assert.equal(g.data.lives,3);assert.equal(g.data.charges,2-i);
+  }
+  g.setImmune(0);g.cat.y=1;g.update(1/120);advance(g,.42);assert.equal(g.data.lives,2);
+  for(let i=0;i<10;i++)g.collectCoin({x:108,y:265,collected:false});
+  assert.equal(g.data.lives,3);assert.equal(g.data.charges,0);
+});
+function passPipe(g){
+  g.cat.y=280;g.cat.vy=0;g.setPipes([{x:20,top:200,passed:false}]);g.update(1/120);
+}
+test('exact targets, single victory, frozen obstacles, explicit transition and conserved totals', () => {
+  const {g,storage}=game();g.start();
+  g.cat.y=1;g.update(1/120);advance(g,.42);
+  for(let i=0;i<12;i++)g.collectCoin({x:108,y:265,collected:false});
+  for(let i=0;i<14;i++)passPipe(g);
+  assert.equal(g.data.state,'playing');assert.equal(g.data.levelScore,14);
+  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,15);
+  const confetti=g.data.confetti, distance=g.data.distance, spawn=g.data.spawn;
+  g.victory();assert.equal(g.data.confetti,confetti);advance(g,5);
+  assert.equal(g.data.distance,distance);assert.equal(g.data.spawn,spawn);assert.equal(g.data.victoryTime,1.5);
+  g.action();assert.equal(g.data.state,'victory');
+  const lives=g.data.lives, coins=g.data.coinCount, charges=g.data.charges;
+  g.nextLevel();assert.equal(g.data.state,'transition');assert.equal(g.data.level,2);
+  assert.equal(g.data.levelScore,0);assert.equal(g.data.score,15);assert.equal(g.data.lives,lives);
+  assert.equal(g.data.coinCount,coins);assert.equal(g.data.charges,charges);assert.equal(g.data.pipes.length,0);
+  advance(g,2);assert.equal(g.data.pipes.length,0);g.action();assert.equal(g.data.state,'playing');
+  for(let i=0;i<19;i++)passPipe(g);assert.equal(g.data.state,'playing');
+  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,35);
+  assert.equal(storage.get('gato-al-vuelo-best'),'35');
+});
+test('coin placement, physical pickup, and collision precedence over scoring', () => {
+  const {g}=game();g.start();advance(g,.85);
+  const p=g.data.pipes[0];assert.ok(p.coin.y-11>p.top);assert.ok(p.coin.y+11<p.top+g.data.GAP);
+  g.cat.y=280;g.cat.vy=0;g.setPipes([{x:90,top:200,passed:false,coin:{x:108,y:280,collected:false}}]);
+  g.update(1/120);assert.equal(g.data.coinCount,1);g.update(1/120);assert.equal(g.data.coinCount,1);
+  g.setImmune(0);g.cat.y=1;g.setPipes([{x:20,top:200,passed:false}]);g.update(1/120);
+  assert.equal(g.data.state,'hit');assert.equal(g.data.score,0);
 });

@@ -2,3 +2,6 @@
 
 /* Seven-by-six pixel hearts, rendered without external assets. */
 .lives{display:flex;gap:6px;align-items:center}.heart{display:block;width:18px;height:18px;background:#f39598;clip-path:polygon(0 17%,14% 17%,14% 0,43% 0,43% 17%,57% 17%,57% 0,86% 0,86% 17%,100% 17%,100% 50%,86% 50%,86% 67%,71% 67%,71% 83%,57% 83%,57% 100%,43% 100%,43% 83%,29% 83%,29% 67%,14% 67%,14% 50%,0 50%)}.heart.lost{background:#526771;opacity:.45}@media(max-width:400px){.hud{padding:0 12px;font-size:8px;letter-spacing:.5px}.hud b{margin-left:4px;font-size:21px}.lives{gap:4px}.heart{width:16px;height:16px}}
+
+.journey{display:grid;grid-template-columns:auto auto 1fr;gap:8px 14px;align-items:center;padding:10px 16px;border-top:1px solid #43616b;font-size:10px;color:#b6d0cf}.journey b{color:#ffcf70}.journey>span:nth-child(3){text-align:right}.journey small{grid-column:1/-1;font-size:9px;letter-spacing:1px}.victory-title{font-size:36px;letter-spacing:-2px}@media(max-width:400px){.journey{font-size:9px;padding:9px 12px}.victory-title{font-size:30px}}
+.heart.restored{animation:heart-return .8s steps(5,end)}@keyframes heart-return{0%{transform:translateY(8px) scale(.5);filter:brightness(2)}50%{transform:translateY(-3px) scale(1.2)}100%{transform:none;filter:none}}
