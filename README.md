@@ -44,3 +44,17 @@ Parámetros ajustables al principio de `game.js`:
 La cámara escala tanto los gráficos como sus posiciones; las colisiones usan las mismas coordenadas de mundo. La reaparición desplaza juntos los obstáculos próximos, manteniendo sus separaciones y sin conceder puntos artificiales.
 
 Ejecuta las pruebas de simulación sin dependencias con `node --test tests/game.test.cjs`. Comprueban vidas, pausa, inmunidad, recuperación, puntuación, Game Over, generación, dimensiones de colisión y física a varias frecuencias de pantalla.
+
+## Versión 1.2: monedas y niveles
+
+- Recoge monedas doradas en el hueco de las tuberías. Cada moneda cuenta una sola vez y produce un destello de partículas.
+- Cada 10 monedas obtienes una recuperación. Si tienes tres vidas, queda guardada como carga; si falta una vida, se usa automáticamente. Las cargas guardadas se aplican después de la animación de daño, incluso si el impacto habría sido mortal. Nunca se superan tres vidas.
+- El marcador indica monedas totales, progreso al siguiente grupo de diez y cargas disponibles.
+- Cada tubería superada suma un punto al nivel y al total. Las metas son 15, 20, 25, 30, 35… (`15 + (nivel - 1) × 5`). El récord utiliza el total y se guarda cada vez que aumenta.
+- Al alcanzar la meta se congelan obstáculos y físicas. El gato celebra y cae confeti durante 1,5 s. La pantalla de victoria permanece hasta pulsar **Siguiente nivel**.
+- La transición limpia los obstáculos y conserva vidas, monedas, cargas y total. Pulsa **Despegar**, Espacio o el área de juego para iniciar el nuevo nivel. La velocidad aumenta suavemente hasta un máximo de 220 unidades/s.
+- Game Over muestra nivel alcanzado, total y monedas. Una nueva partida reinicia todo excepto el récord.
+
+Parámetros adicionales en `game.js`: `COINS_PER_LIFE` (10), `COIN_EVERY` (una moneda cada N parejas), `COIN_RADIUS`, `BASE_TARGET` (15), `TARGET_INCREMENT` (5), `SPEED_INCREMENT` (6), `MAX_SPEED` (220) y `VICTORY_DURATION` (1.5 s). Se conservan la gravedad, el impulso, el zoom y los tiempos de daño anteriores.
+
+Las pruebas incluyen recolección única, recompensas acumuladas, límite de vidas, objetivos exactos de niveles 1 y 2, victoria única sin generación, conservación al avanzar y prioridad de las colisiones sobre los puntos.
