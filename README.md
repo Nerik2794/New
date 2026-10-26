@@ -45,31 +45,42 @@ La cámara escala tanto los gráficos como sus posiciones; las colisiones usan l
 
 Ejecuta las pruebas de simulación sin dependencias con `node --test tests/game.test.cjs`. Comprueban vidas, pausa, inmunidad, recuperación, puntuación, Game Over, generación, dimensiones de colisión y física a varias frecuencias de pantalla.
 
-## Versión 1.2: monedas y niveles
+## Monedas y niveles
 
 - Recoge monedas doradas en el hueco de las tuberías. Cada moneda cuenta una sola vez y produce un destello de partículas.
 - Cada 10 monedas obtienes una recuperación. Si tienes tres vidas, queda guardada como carga; si falta una vida, se usa automáticamente. Las cargas guardadas se aplican después de la animación de daño, incluso si el impacto habría sido mortal. Nunca se superan tres vidas.
 - El marcador indica monedas totales, progreso al siguiente grupo de diez y cargas disponibles.
-- Cada tubería superada suma un punto al nivel y al total. Las metas son 15, 20, 25, 30, 35… (`15 + (nivel - 1) × 5`). El récord utiliza el total y se guarda cada vez que aumenta.
+- Cada tubería superada suma un punto al nivel y al total. Las metas son 15, 17, 19, 21, 23… (`15 + (nivel - 1) × 2`). El récord utiliza el total y se guarda cada vez que aumenta.
 - Al alcanzar la meta se congelan obstáculos y físicas. El gato celebra y cae confeti durante 1,5 s. La pantalla de victoria permanece hasta pulsar **Siguiente nivel**.
-- La transición limpia los obstáculos y conserva vidas, monedas, cargas y total. Pulsa **Despegar**, Espacio o el área de juego para iniciar el nuevo nivel. Desde la versión 1.3, la velocidad aumenta un 5 % compuesto por nivel, según la fórmula documentada abajo.
+- La transición limpia los obstáculos y conserva vidas, monedas, cargas y total. Pulsa **Despegar**, Espacio o el área de juego para iniciar el nuevo nivel. Desde la versión 1.4, la velocidad aumenta un 7 % compuesto por nivel, según la fórmula documentada abajo.
 - Game Over muestra nivel alcanzado, total y monedas. Una nueva partida reinicia todo excepto el récord.
 
-Parámetros adicionales en `game.js`: `COINS_PER_LIFE` (10), `COIN_EVERY` (una moneda cada N parejas), `COIN_RADIUS`, `BASE_TARGET` (15), `TARGET_INCREMENT` (5), `LEVEL_SPEED_FACTOR` (1.05) y `VICTORY_DURATION` (1.5 s). Se conservan la gravedad, el impulso, el zoom y los tiempos de daño anteriores.
+Parámetros adicionales en `game.js`: `COINS_PER_LIFE` (10), `COIN_EVERY` (una moneda cada N parejas), `COIN_RADIUS`, `BASE_TARGET` (15), `TARGET_INCREMENT` (2), `LEVEL_SPEED_FACTOR` (1.07) y `VICTORY_DURATION` (1.5 s). Se conservan la gravedad, el impulso, el zoom y los tiempos de daño anteriores.
 
 Las pruebas incluyen recolección única, recompensas acumuladas, límite de vidas, objetivos exactos de niveles 1 y 2, victoria única sin generación, conservación al avanzar y prioridad de las colisiones sobre los puntos.
 
 
-## Versión 1.3: dificultad progresiva y Dash Felino
+## Versión 1.4: progresión y Dash Felino fluido
 
-La velocidad horizontal de cada nivel es `SPEED * (LEVEL_SPEED_FACTOR ** (nivel - 1))`. Con base 160 y factor 1.05: nivel 1 = 160, nivel 2 = 168, nivel 5 ≈ 194.48 y nivel 10 ≈ 248.21 unidades/s. No se aplica el límite anterior ni se acumulan incrementos sobre partidas previas. La gravedad, salto, tuberías y aberturas conservan sus dimensiones. El intervalo entre parejas se mantiene en tiempo de desplazamiento: aumenta su distancia con la velocidad para conservar el margen de reacción; las monedas acompañan a sus tuberías.
+Las metas de nivel son `15 + (nivel - 1) * 2`; la velocidad es `SPEED * (1.07 ** (nivel - 1))`. Se calculan desde la base al cambiar de nivel; reiniciar vuelve al nivel 1 sin acumular multiplicadores.
 
-- **Shift izquierdo o derecho**, o el botón **ϟ DASH**, activa el Dash Felino. El botón no produce un salto. Espacio y clic/toque en el escenario siguen impulsando al gato.
-- Cada nivel comienza con una carga, consumida al activarla. Recibir daño o recoger monedas no la recarga. Solo un nivel nuevo o una partida nueva la restauran.
-- Durante exactamente un segundo de simulación, el gato avanza, deja una estela pixel art y atraviesa obstáculos sin daño. Las monedas y los puntos siguen contando. El botón muestra el tiempo restante; después queda gris.
-- Al terminar, vuelve suavemente a su posición. Los obstáculos en el corredor de retorno se desplazan juntos con sus monedas para garantizar una salida segura. Se conserva su estado de puntuación/recolección y no se concede invulnerabilidad adicional por el dash. La protección de recuperación de una vida, si ya existía, mantiene su temporizador independiente.
-- No se activa durante inicio, daño, victoria, transición o Game Over. Completar un nivel cancela el dash y da paso a la celebración. El aviso **+5% velocidad** aparece desde el segundo nivel y permanece durante los primeros dos segundos de juego.
+| Nivel | Meta | Multiplicador de velocidad |
+| --- | --- | --- |
+| 1 | 15 | 1 |
+| 2 | 17 | 1.07 |
+| 3 | 19 | 1.1449 |
+| 10 | 33 | 1.838459 |
 
-Parámetros configurables: `LEVEL_SPEED_FACTOR` (1.05), `DASH_DURATION` (1 s), `DASH_DISTANCE` (100 unidades), `DASH_RETURN` (0.35 s) y `DASH_SCROLL_FACTOR` (1.8). `SPEED` sigue siendo la velocidad base. La cuenta del dash utiliza el mismo paso fijo y la misma pausa por pestaña oculta que la física.
+La física vertical y las dimensiones de las tuberías no cambian. La separación horizontal crece con la velocidad del nivel para conservar el tiempo de reacción. El aviso **+7% velocidad** aparece desde el segundo nivel durante los primeros dos segundos de juego.
 
-Pruebas: `node --test tests/game.test.cjs`. La suite comprueba la fórmula en niveles 1, 2, 5 y 10; duración exacta, límites, salida segura, cargas, monedas, puntos y victoria durante el dash, además de las mecánicas anteriores. Para una comprobación manual, abre `index.html` en Chrome, inicia, usa Shift o el botón y verifica que no se pueda repetir hasta el siguiente nivel. No se requiere servidor ni instalación.
+- **Shift izquierdo o derecho** o el botón **ϟ DASH** activa la habilidad. El botón no produce un salto. Espacio y clic/toque en el escenario siguen impulsando al gato.
+- Cada nivel comienza con una carga. Daño y monedas no la recargan; un nuevo nivel o una partida nueva sí.
+- El gato permanece en su posición horizontal habitual: no hay avance seguido de retroceso. El mundo recibe un impulso **aditivo**, independiente de la velocidad base del nivel.
+- El impulso acelera con `smoothstep` durante 0,2 s y frena durante los últimos 0,35 s del dash, hasta recuperar la velocidad normal al cumplirse un segundo. La estela, las líneas y el brillo aparecen y desaparecen gradualmente; la postura se mezcla con la animación normal.
+- La invulnerabilidad del dash dura un segundo de simulación. Si termina superpuesto a una tubería o junto a suelo/techo, se activa una salida de seguridad de **como máximo 0,25 s**, sin renovarse: el escenario despeja la superposición suavemente y, si hace falta, el gato se separa verticalmente del borde con interpolación. No se teletransporta ni se recolocan tuberías instantáneamente. Esta protección de salida es distinta de la recuperación de vida de 1,5 s.
+- Las monedas se detectan a lo largo del movimiento entre pasos, para que una aceleración no las salte. Cada moneda y pareja siguen contabilizándose una sola vez.
+- El dash no funciona durante inicio, daño, victoria, transición o Game Over. La victoria cancela impulso y salida de seguridad.
+
+Parámetros en `game.js`: `TARGET_INCREMENT` (2), `LEVEL_SPEED_FACTOR` (1.07), `DASH_DURATION` (1 s), `DASH_EXTRA_SPEED` (160 unidades/s), `DASH_EASE_IN` (0.2 s), `DASH_EASE_OUT` (0.35 s), `DASH_EXIT_DURATION` (0.25 s). `SPEED` conserva la base de 160 unidades/s. La cuenta utiliza el paso fijo y pausa de pestaña de la física.
+
+Ejecuta `node --test tests/game.test.cjs`. Se comprueban fórmulas de niveles 1, 2, 3 y 10; duración y carga del dash, salida limitada, ausencia de retroceso, continuidad del impulso, aceleración aditiva y consistencia a 30/60/120 FPS, además de vidas, monedas, puntos, niveles y récord. Manualmente, abre `index.html` en Chrome y prueba Shift y el botón; no necesitas servidor ni instalación.
