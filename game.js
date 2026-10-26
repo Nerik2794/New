@@ -9,11 +9,17 @@
   const FLOOR = 568 / WORLD_SCALE;
   const GRAVITY = 1400, IMPULSE = -440, SPEED = 160, GAP = 174;
   const COINS_PER_LIFE = 10, COIN_EVERY = 1, COIN_RADIUS = 11;
-  const BASE_TARGET = 15, TARGET_INCREMENT = 5, LEVEL_SPEED_FACTOR = 1.05;
+  const BASE_TARGET = 15, TARGET_INCREMENT = 2, LEVEL_SPEED_FACTOR = 1.07;
   const VICTORY_DURATION = 1.5;
-  const DASH_DURATION = 1, DASH_DISTANCE = 100, DASH_RETURN = 0.35, DASH_SCROLL_FACTOR = 1.8;
+  const DASH_DURATION = 1, DASH_EXTRA_SPEED = 160, DASH_EASE_IN = 0.2, DASH_EASE_OUT = 0.35;
+  const DASH_EXIT_DURATION = 0.25;
+  const smoothstep = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+  function dashEnvelope(elapsed) {
+    return smoothstep(elapsed / DASH_EASE_IN) * smoothstep((DASH_DURATION - elapsed) / DASH_EASE_OUT);
+  }
   const CAT_HOME_X = 108;
-  let dashAvailable = true, dashRemaining = 0, dashReturn = 0, dashReturnX = CAT_HOME_X;
+  let dashAvailable = true, dashRemaining = 0, dashBoost = 0;
+  let exitRemaining = 0, exitDistance = 0, exitStartY = 0, exitTargetY = 0;
   let dashTrail = [], speedNoticeTime = 0;
   let level = 1, levelScore = 0, coinCount = 0, charges = 0, generated = 0;
   let victoryTime = 0, confetti = [], sparkles = [], healTime = 0;
@@ -52,28 +58,23 @@
     ui.dash.style.setProperty('--dash-progress', `${dashRemaining / DASH_DURATION * 100}%`);
   }
   function resetDash() {
-    dashAvailable = true; dashRemaining = 0; dashReturn = 0; dashTrail = []; cat.x = CAT_HOME_X;
+    dashAvailable = true; dashRemaining = 0; exitRemaining = 0; dashBoost = 0; dashTrail = []; cat.x = CAT_HOME_X;
     refreshDash();
   }
   function activateDash() {
     if (state !== 'playing' || !dashAvailable || dashRemaining > 0) return;
-    dashAvailable = false; dashRemaining = DASH_DURATION; dashReturn = 0;
+    dashAvailable = false; dashRemaining = DASH_DURATION; exitRemaining = 0; dashBoost = 0;
     ui.announcement.textContent = '¡Dash Felino! Invulnerable durante un segundo.';
     refreshDash();
   }
   function finishDash() {
-    dashRemaining = 0; dashReturn = DASH_RETURN; dashReturnX = cat.x;
-    const safeY = Math.max(90, Math.min(FLOOR - 90, cat.y));
-    if (safeY !== cat.y) { cat.y = safeY; cat.vy = 0; }
-    // Clear the entire return corridor, including already-scored pipes. No extra immunity.
-    const upcoming = pipes.filter(p => p.x + PIPE_WIDTH + 5 >= CAT_HOME_X - 14);
-    const nearest = upcoming.reduce((x, p) => Math.min(x, p.x), Infinity);
-    const safeX = cat.x + 40 + speed() * (DASH_RETURN + 0.5);
-    if (nearest < safeX) for (const pipe of upcoming) {
-      pipe.x += safeX - nearest;
-      if (pipe.coin) pipe.coin.x += safeX - nearest;
-    }
-    if (upcoming.length) spawn = Math.max(spawn, (Math.max(...upcoming.map(p => p.x)) - (W + 10)) / speed() + PIPE_INTERVAL);
+    dashRemaining = 0; dashBoost = 0;
+    // A bounded, eased clearance pass replaces the old position/obstacle teleport.
+    const overlapping = pipes.filter(p => cat.x + 14 + speed() * 0.1 > p.x - 5 && cat.x - 14 < p.x + PIPE_WIDTH + 5 &&
+      (cat.y - 14 < p.top || cat.y + 15 > p.top + GAP));
+    exitStartY = cat.y; exitTargetY = Math.max(90, Math.min(FLOOR - 90, cat.y));
+    exitDistance = overlapping.reduce((amount, p) => Math.max(amount, p.x + PIPE_WIDTH + 5 - (cat.x - 14) + 24), 0);
+    if (overlapping.length || exitTargetY !== exitStartY) exitRemaining = DASH_EXIT_DURATION;
     refreshDash();
   }
   function saveBest() {
@@ -94,7 +95,7 @@
   }
   function victory() {
     if (state !== 'playing') return;
-    state = 'victory'; dashRemaining = 0; dashReturn = 0; dashTrail = []; refreshDash(); victoryTime = 0; saveBest();
+    state = 'victory'; dashRemaining = 0; exitRemaining = 0; dashBoost = 0; dashTrail = []; refreshDash(); victoryTime = 0; saveBest();
     confetti = Array.from({ length: 64 }, () => ({ x: Math.random() * W, y: Math.random() * H * 0.55,
       vx: (Math.random() - 0.5) * 90, vy: 40 + Math.random() * 100,
       color: ['#ffcf70', '#f39598', '#a2cf74', '#def2df'][Math.floor(Math.random() * 4)] }));
@@ -119,8 +120,8 @@
   }
   refreshHud();
   function damage() {
-    if (immune > 0 || dashRemaining > 0 || state !== 'playing') return;
-    lives--; showLives(); state = 'hit'; dashReturn = 0; refreshDash(); hitRemaining = HIT_PAUSE;
+    if (immune > 0 || dashRemaining > 0 || exitRemaining > 0 || state !== 'playing') return;
+    lives--; showLives(); state = 'hit'; exitRemaining = 0; dashBoost = 0; refreshDash(); hitRemaining = HIT_PAUSE;
     particles = Array.from({ length: 16 }, (_, i) => ({
       x: cat.x, y: cat.y, vx: Math.cos(i * Math.PI / 8) * 90,
       vy: Math.sin(i * Math.PI / 8) * 90 - 30
@@ -213,20 +214,28 @@
     }
     if (state !== 'playing') return;
     immune = Math.max(0, immune - dt);
-    const dashing = dashRemaining > 0;
-    if (dashing) {
-      const progress = Math.min(1, (DASH_DURATION - dashRemaining + dt) / DASH_DURATION);
-      cat.x = CAT_HOME_X + Math.min(DASH_DISTANCE, W - CAT_HOME_X - 35) * Math.sin(progress * Math.PI / 2);
-      dashTrail.push({ x: cat.x, y: cat.y, time: 0.22 });
-    } else if (dashReturn > 0) {
-      dashReturn = Math.max(0, dashReturn - dt);
-      const t = 1 - dashReturn / DASH_RETURN;
-      cat.x = dashReturnX + (CAT_HOME_X - dashReturnX) * t * t * (3 - 2 * t);
+    const dashing = dashRemaining > 0, exiting = exitRemaining > 0;
+    const previousY = cat.y;
+    cat.x = CAT_HOME_X;
+    dashBoost = dashing ? DASH_EXTRA_SPEED * dashEnvelope(DASH_DURATION - dashRemaining + dt / 2) : 0;
+    let clearanceDelta = 0;
+    if (exiting) {
+      const before = 1 - exitRemaining / DASH_EXIT_DURATION;
+      exitRemaining = Math.max(0, exitRemaining - dt);
+      if (exitRemaining < 1e-9) exitRemaining = 0;
+      const after = 1 - exitRemaining / DASH_EXIT_DURATION;
+      clearanceDelta = exitDistance * (smoothstep(after) - smoothstep(before));
+      if (exitStartY !== exitTargetY) {
+        cat.y = exitStartY + (exitTargetY - exitStartY) * smoothstep(after); cat.vy = 0;
+      }
     }
-    const relativeFactor = dashing ? DASH_SCROLL_FACTOR : 1;
-    distance += speed() * relativeFactor * dt;
-    cat.vy += GRAVITY * dt; cat.y += cat.vy * dt;
-    spawn -= dt * relativeFactor;
+    const worldDelta = (speed() + dashBoost) * dt + clearanceDelta;
+    distance += worldDelta;
+    if (!exiting || exitStartY === exitTargetY) { cat.vy += GRAVITY * dt; cat.y += cat.vy * dt; }
+    for (const ghost of dashTrail) ghost.x -= worldDelta;
+    if (dashing) dashTrail.push({ x: cat.x, y: cat.y, time: 0.22, power: dashEnvelope(DASH_DURATION - dashRemaining + dt / 2) });
+    // Express the spawn clock in travelled distance, including the additive boost.
+    spawn -= worldDelta / speed();
     if (spawn <= 0) {
       const pipe = { x: W + 10, top: 95 + Math.random() * 230, passed: false };
       generated++;
@@ -236,19 +245,19 @@
       spawn += PIPE_INTERVAL;
     }
     for (const pipe of pipes) {
-      pipe.x -= speed() * relativeFactor * dt; if (pipe.coin) pipe.coin.x -= speed() * relativeFactor * dt;
+      pipe.x -= worldDelta; if (pipe.coin) pipe.coin.x -= worldDelta;
     }
     // A compact hitbox keeps the decorative tail and ears forgiving.
     const left = cat.x - 14, right = cat.x + 14, top = cat.y - 14, bottom = cat.y + 15;
-    if (!dashing && immune <= 0 && (top <= 0 || bottom >= FLOOR || pipes.some(p => right > p.x - 5 && left < p.x + PIPE_WIDTH + 5 && (top < p.top || bottom > p.top + GAP)))) {
+    if (!dashing && !exiting && immune <= 0 && (top <= 0 || bottom >= FLOOR || pipes.some(p => right > p.x - 5 && left < p.x + PIPE_WIDTH + 5 && (top < p.top || bottom > p.top + GAP)))) {
       damage(); return;
     }
-    if (immune > 0 || dashing) {
+    if (immune > 0 || dashing || exiting) {
       cat.y = Math.max(15, Math.min(FLOOR - 16, cat.y));
       if (cat.y === 15 || cat.y === FLOOR - 16) cat.vy = 0;
     }
     for (const pipe of pipes) {
-      if (pipe.coin && !pipe.coin.collected && Math.abs(cat.x - pipe.coin.x) < 14 + COIN_RADIUS && Math.abs(cat.y - pipe.coin.y) < 15 + COIN_RADIUS) collectCoin(pipe.coin);
+      if (pipe.coin && !pipe.coin.collected && touchesCoin(pipe.coin, worldDelta, previousY)) collectCoin(pipe.coin);
       if (!pipe.passed && pipe.x + PIPE_WIDTH + 5 < left) {
         pipe.passed = true; score++; levelScore++; refreshHud(); saveBest();
         if (levelScore >= target()) { victory(); return; }
@@ -260,6 +269,21 @@
       if (dashRemaining < 1e-9) finishDash();
       else refreshDash();
     }
+  }
+  function touchesCoin(coin, worldDelta, previousY) {
+    // Sweep relative motion so fast scenery/clearance cannot skip a coin between steps.
+    const startX = coin.x + worldDelta - cat.x, startY = coin.y - previousY;
+    const dx = -worldDelta, dy = previousY - cat.y;
+    let near = 0, far = 1;
+    for (const [start, delta, radius] of [[startX, dx, 14 + COIN_RADIUS], [startY, dy, 15 + COIN_RADIUS]]) {
+      if (Math.abs(delta) < 1e-9) { if (Math.abs(start) > radius) return false; }
+      else {
+        const a = (-radius - start) / delta, b = (radius - start) / delta;
+        near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
+        if (near > far) return false;
+      }
+    }
+    return true;
   }
   function rect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
   function cloud(x, y, scale) {
@@ -283,9 +307,10 @@
   function drawCat() {
     const y = state === 'victory' ? cat.y - Math.abs(Math.sin(victoryTime * Math.PI * 4)) * 22 : state === 'ready' ? cat.y + Math.sin(clock * 3) * 7 : cat.y;
     ctx.save();
-    if ((state === 'hit' && Math.floor(hitRemaining * 24) % 2) || (immune > 0 && Math.floor(immune * 12) % 2)) ctx.globalAlpha = 0.35;
+    if ((state === 'hit' && Math.floor(hitRemaining * 24) % 2) || (immune > 0 && Math.floor(immune * 12) % 2) || (exitRemaining > 0 && Math.floor(exitRemaining * 24) % 2)) ctx.globalAlpha = 0.35;
     ctx.translate(cat.x + (state === 'hit' ? Math.sin(hitRemaining * 65) * 4 : 0), y);
-    ctx.rotate(dashRemaining > 0 ? 0 : state === 'playing' ? Math.max(-0.35, Math.min(0.9, cat.vy / 750)) : -0.08);
+    const flightAngle = state === 'playing' ? Math.max(-0.35, Math.min(0.9, cat.vy / 750)) : -0.08;
+    ctx.rotate(flightAngle * (1 - (dashRemaining > 0 ? dashEnvelope(DASH_DURATION - dashRemaining) : 0)));
     const fur = '#18212c', light = '#303945';
     rect(-26, 1, 12, 7, fur); rect(-29, -8, 7, 15, fur);
     rect(-17, -12, 34, 29, fur); rect(-13, -20, 10, 14, fur); rect(7, -20, 10, 14, fur);
@@ -318,14 +343,13 @@
       rect(-7, -8, 14, 16, '#ffcf70'); rect(-3, -5, 4, 10, '#fff4ce'); ctx.restore();
     }
     for (const ghost of dashTrail) {
-      ctx.globalAlpha = ghost.time / 0.22 * 0.35;
+      ctx.globalAlpha = ghost.time / 0.22 * 0.35 * ghost.power;
       rect(ghost.x - 20, ghost.y - 12, 32, 25, '#b4f4ee');
       rect(ghost.x - 55, ghost.y - 6, 28, 3, '#ffcf70');
     }
     ctx.globalAlpha = 1;
     if (dashRemaining > 0) {
-      const flash = DASH_DURATION - dashRemaining < 0.12;
-      ctx.globalAlpha = flash ? 0.75 : 0.4;
+      ctx.globalAlpha = 0.6 * dashEnvelope(DASH_DURATION - dashRemaining);
       rect(cat.x - 22, cat.y - 22, 45, 4, '#def2df');
       rect(cat.x + 23, cat.y - 18, 4, 35, '#def2df');
       rect(cat.x - 22, cat.y + 20, 45, 4, '#ffcf70');
