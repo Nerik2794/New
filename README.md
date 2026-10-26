@@ -52,9 +52,24 @@ Ejecuta las pruebas de simulación sin dependencias con `node --test tests/game.
 - El marcador indica monedas totales, progreso al siguiente grupo de diez y cargas disponibles.
 - Cada tubería superada suma un punto al nivel y al total. Las metas son 15, 20, 25, 30, 35… (`15 + (nivel - 1) × 5`). El récord utiliza el total y se guarda cada vez que aumenta.
 - Al alcanzar la meta se congelan obstáculos y físicas. El gato celebra y cae confeti durante 1,5 s. La pantalla de victoria permanece hasta pulsar **Siguiente nivel**.
-- La transición limpia los obstáculos y conserva vidas, monedas, cargas y total. Pulsa **Despegar**, Espacio o el área de juego para iniciar el nuevo nivel. La velocidad aumenta suavemente hasta un máximo de 220 unidades/s.
+- La transición limpia los obstáculos y conserva vidas, monedas, cargas y total. Pulsa **Despegar**, Espacio o el área de juego para iniciar el nuevo nivel. Desde la versión 1.3, la velocidad aumenta un 5 % compuesto por nivel, según la fórmula documentada abajo.
 - Game Over muestra nivel alcanzado, total y monedas. Una nueva partida reinicia todo excepto el récord.
 
-Parámetros adicionales en `game.js`: `COINS_PER_LIFE` (10), `COIN_EVERY` (una moneda cada N parejas), `COIN_RADIUS`, `BASE_TARGET` (15), `TARGET_INCREMENT` (5), `SPEED_INCREMENT` (6), `MAX_SPEED` (220) y `VICTORY_DURATION` (1.5 s). Se conservan la gravedad, el impulso, el zoom y los tiempos de daño anteriores.
+Parámetros adicionales en `game.js`: `COINS_PER_LIFE` (10), `COIN_EVERY` (una moneda cada N parejas), `COIN_RADIUS`, `BASE_TARGET` (15), `TARGET_INCREMENT` (5), `LEVEL_SPEED_FACTOR` (1.05) y `VICTORY_DURATION` (1.5 s). Se conservan la gravedad, el impulso, el zoom y los tiempos de daño anteriores.
 
 Las pruebas incluyen recolección única, recompensas acumuladas, límite de vidas, objetivos exactos de niveles 1 y 2, victoria única sin generación, conservación al avanzar y prioridad de las colisiones sobre los puntos.
+
+
+## Versión 1.3: dificultad progresiva y Dash Felino
+
+La velocidad horizontal de cada nivel es `SPEED * (LEVEL_SPEED_FACTOR ** (nivel - 1))`. Con base 160 y factor 1.05: nivel 1 = 160, nivel 2 = 168, nivel 5 ≈ 194.48 y nivel 10 ≈ 248.21 unidades/s. No se aplica el límite anterior ni se acumulan incrementos sobre partidas previas. La gravedad, salto, tuberías y aberturas conservan sus dimensiones. El intervalo entre parejas se mantiene en tiempo de desplazamiento: aumenta su distancia con la velocidad para conservar el margen de reacción; las monedas acompañan a sus tuberías.
+
+- **Shift izquierdo o derecho**, o el botón **ϟ DASH**, activa el Dash Felino. El botón no produce un salto. Espacio y clic/toque en el escenario siguen impulsando al gato.
+- Cada nivel comienza con una carga, consumida al activarla. Recibir daño o recoger monedas no la recarga. Solo un nivel nuevo o una partida nueva la restauran.
+- Durante exactamente un segundo de simulación, el gato avanza, deja una estela pixel art y atraviesa obstáculos sin daño. Las monedas y los puntos siguen contando. El botón muestra el tiempo restante; después queda gris.
+- Al terminar, vuelve suavemente a su posición. Los obstáculos en el corredor de retorno se desplazan juntos con sus monedas para garantizar una salida segura. Se conserva su estado de puntuación/recolección y no se concede invulnerabilidad adicional por el dash. La protección de recuperación de una vida, si ya existía, mantiene su temporizador independiente.
+- No se activa durante inicio, daño, victoria, transición o Game Over. Completar un nivel cancela el dash y da paso a la celebración. El aviso **+5% velocidad** aparece desde el segundo nivel y permanece durante los primeros dos segundos de juego.
+
+Parámetros configurables: `LEVEL_SPEED_FACTOR` (1.05), `DASH_DURATION` (1 s), `DASH_DISTANCE` (100 unidades), `DASH_RETURN` (0.35 s) y `DASH_SCROLL_FACTOR` (1.8). `SPEED` sigue siendo la velocidad base. La cuenta del dash utiliza el mismo paso fijo y la misma pausa por pestaña oculta que la física.
+
+Pruebas: `node --test tests/game.test.cjs`. La suite comprueba la fórmula en niveles 1, 2, 5 y 10; duración exacta, límites, salida segura, cargas, monedas, puntos y victoria durante el dash, además de las mecánicas anteriores. Para una comprobación manual, abre `index.html` en Chrome, inicia, usa Shift o el botón y verifica que no se pueda repetir hasta el siguiente nivel. No se requiere servidor ni instalación.
