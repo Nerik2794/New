@@ -2,14 +2,14 @@
   'use strict';
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const ui = Object.fromEntries(['score', 'best', 'overlay', 'title', 'message', 'play', 'eyebrow', 'hint', 'announcement', 'lives', 'level', 'progress', 'coins', 'charges', 'dash', 'speedNotice'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['score', 'best', 'overlay', 'title', 'message', 'play', 'eyebrow', 'hint', 'announcement', 'lives', 'level', 'progress', 'coins', 'charges', 'dash', 'speedNotice', 'speedValue', 'pauseButton', 'pauseMenu', 'pauseChoices', 'pauseConfirm', 'pauseTitle', 'confirmText', 'resume', 'restart', 'quit', 'confirmYes', 'confirmNo', 'arcade'].map(id => [id, document.getElementById(id)]));
   const MAX_LIVES = 3, HIT_PAUSE = 0.4, INVULNERABILITY = 1.5;
   const WORLD_SCALE = 0.85, PIPE_WIDTH = Math.round(68 * 0.8), PIPE_INTERVAL = 1.7;
   const W = canvas.width / WORLD_SCALE, H = canvas.height / WORLD_SCALE;
   const FLOOR = 568 / WORLD_SCALE;
   const GRAVITY = 1400, IMPULSE = -440, SPEED = 160, GAP = 174;
   const COINS_PER_LIFE = 10, COIN_EVERY = 1, COIN_RADIUS = 11;
-  const BASE_TARGET = 15, TARGET_INCREMENT = 2, LEVEL_SPEED_FACTOR = 1.07;
+  const BASE_TARGET = 5, TARGET_INCREMENT = 2, LEVEL_SPEED_FACTOR = 1.07;
   const VICTORY_DURATION = 1.5;
   const DASH_DURATION = 1, DASH_EXTRA_SPEED = 160, DASH_EASE_IN = 0.2, DASH_EASE_OUT = 0.35;
   const DASH_EXIT_DURATION = 0.25;
@@ -29,6 +29,7 @@
   let state = 'ready', score = 0, best = 0, pipes = [], spawn = 0, clock = 0, distance = 0;
   let lives = MAX_LIVES, hitRemaining = 0, immune = 0, particles = [];
   let last = null, accumulator = 0, deathTime = 0;
+  let resumeState = null, pendingAction = null;
   const cat = { x: CAT_HOME_X, y: 265, vy: 0 };
   try { best = Math.max(0, Number(localStorage.getItem('gato-al-vuelo-best')) || 0); } catch { /* Storage can be unavailable for local files or private browsing. */ }
   ui.best.textContent = best;
@@ -45,17 +46,66 @@
   showLives();
   function refreshHud() {
     ui.score.textContent = score; ui.level.textContent = level;
+    ui.speedValue.textContent = `VELOCIDAD: ${(speed() / SPEED).toFixed(2)}x`;
     ui.progress.textContent = `${levelScore} / ${target()}`;
     ui.coins.textContent = `${coinCount} · ${coinCount % COINS_PER_LIFE}/${COINS_PER_LIFE}`;
     ui.charges.textContent = charges ? `+${charges} recuperación${charges === 1 ? '' : 'es'}` : 'Sin cargas';
   }
   function refreshDash() {
+    ui.pauseButton.disabled = !['playing', 'hit', 'paused'].includes(state);
+    ui.pauseButton.setAttribute('aria-expanded', String(state === 'paused'));
     ui.dash.disabled = state !== 'playing' || !dashAvailable;
     ui.dash.classList.toggle('active', dashRemaining > 0);
     ui.dash.classList.toggle('spent', !dashAvailable && dashRemaining <= 0);
     ui.dash.textContent = dashRemaining > 0 ? `ϟ DASH · ${dashRemaining.toFixed(1)} s` : dashAvailable ? 'ϟ DASH · SHIFT' : 'ϟ DASH · CONSUMIDO';
     ui.dash.setAttribute('aria-label', dashRemaining > 0 ? 'Dash activo' : dashAvailable ? 'Activar Dash Felino con Shift o este botón' : 'Dash consumido hasta el siguiente nivel');
     ui.dash.style.setProperty('--dash-progress', `${dashRemaining / DASH_DURATION * 100}%`);
+  }
+  function resetPauseClock() { last = null; accumulator = 0; }
+  function closePauseMenu() {
+    ui.pauseMenu.hidden = true; ui.arcade.classList.remove('is-paused');
+    pendingAction = null; resumeState = null; resetPauseClock();
+  }
+  function pause() {
+    if (!['playing', 'hit'].includes(state)) return;
+    resumeState = state; state = 'paused'; resetPauseClock(); refreshDash();
+    pendingAction = null; ui.pauseChoices.hidden = false; ui.pauseConfirm.hidden = true;
+    ui.pauseTitle.textContent = 'En pausa'; ui.pauseMenu.hidden = false;
+    ui.arcade.classList.add('is-paused');
+    ui.announcement.textContent = 'Partida en pausa.';
+    ui.resume.focus({ preventScroll: true });
+  }
+  function resume() {
+    if (state !== 'paused') return;
+    state = resumeState; closePauseMenu(); refreshDash();
+    ui.announcement.textContent = 'Partida reanudada.';
+    ui.pauseButton.focus({ preventScroll: true });
+  }
+  function requestPauseAction(action) {
+    if (state !== 'paused') return;
+    pendingAction = action; ui.pauseChoices.hidden = true; ui.pauseConfirm.hidden = false;
+    ui.pauseTitle.textContent = action === 'restart' ? '¿Reiniciar?' : '¿Salir?';
+    ui.confirmText.textContent = action === 'restart' ? 'Volverás al nivel 1. El récord se conserva.' : 'Volverás al menú principal. El récord se conserva.';
+    ui.confirmNo.focus({ preventScroll: true });
+  }
+  function cancelPauseAction() {
+    if (state !== 'paused') return;
+    pendingAction = null; ui.pauseChoices.hidden = false; ui.pauseConfirm.hidden = true;
+    ui.pauseTitle.textContent = 'En pausa'; ui.resume.focus({ preventScroll: true });
+  }
+  function confirmPauseAction() {
+    if (state !== 'paused' || !pendingAction) return;
+    const action = pendingAction;
+    start();
+    if (action === 'quit') {
+      state = 'ready'; cat.vy = 0; refreshDash();
+      ui.eyebrow.textContent = 'PEQUEÑAS ALAS, GRANDES SALTOS';
+      ui.title.innerHTML = 'Gato al<br><em>vuelo.</em>';
+      ui.message.innerHTML = 'Desafía la gravedad.<br>Encuentra tu hueco entre las tuberías.';
+      ui.play.innerHTML = 'Jugar <span>↗</span>'; ui.hint.textContent = 'ESPACIO · CLIC · TOQUE';
+      ui.overlay.hidden = false; ui.play.focus({ preventScroll: true });
+      ui.announcement.textContent = 'Menú principal.';
+    }
   }
   function resetDash() {
     dashAvailable = true; dashRemaining = 0; exitRemaining = 0; dashBoost = 0; dashTrail = []; cat.x = CAT_HOME_X;
@@ -145,6 +195,7 @@
   }
   function flap() { cat.vy = IMPULSE; }
   function start() {
+    closePauseMenu();
     level = 1; levelScore = 0; coinCount = 0; charges = 0; generated = 0; healTime = 0; sparkles = []; confetti = [];
     ui.title.classList.remove('victory-title');
     state = 'playing'; lives = MAX_LIVES; hitRemaining = 0; immune = 0; particles = []; showLives(); score = 0; pipes = []; spawn = 0.8; distance = 0;
@@ -152,6 +203,7 @@
     cat.y = 265; cat.vy = 0; accumulator = 0;
     refreshHud(); ui.overlay.hidden = true;
     ui.announcement.textContent = 'Partida iniciada.';
+    canvas.focus({ preventScroll: true });
     flap();
   }
   function end() {
@@ -178,10 +230,31 @@
     else if (state === 'ready' || state === 'over') start();
   });
   ui.dash.addEventListener('click', activateDash);
+  ui.pauseButton.addEventListener('click', () => state === 'paused' ? resume() : pause());
+  ui.resume.addEventListener('click', resume);
+  ui.restart.addEventListener('click', () => requestPauseAction('restart'));
+  ui.quit.addEventListener('click', () => requestPauseAction('quit'));
+  ui.confirmYes.addEventListener('click', confirmPauseAction);
+  ui.confirmNo.addEventListener('click', cancelPauseAction);
   refreshDash();
   canvas.addEventListener('pointerdown', event => { event.preventDefault(); action(); });
   window.addEventListener('keydown', event => {
-    if (event.repeat) return;
+    if (event.repeat && event.code !== 'Tab') return;
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      if (state === 'paused') { if (pendingAction) cancelPauseAction(); else resume(); }
+      else pause();
+      return;
+    }
+    if (state === 'paused') {
+      if (event.code === 'Tab') {
+        const buttons = pendingAction ? [ui.confirmYes, ui.confirmNo] : [ui.resume, ui.restart, ui.quit];
+        const index = buttons.indexOf(document.activeElement);
+        const next = (index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length;
+        event.preventDefault(); buttons[next].focus({ preventScroll: true });
+      }
+      return; // Leave Enter/Space to the focused menu button; block gameplay inputs.
+    }
     if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') { event.preventDefault(); activateDash(); return; }
     if (event.code !== 'Space') return;
     if (state === 'victory' && document.activeElement === ui.play) return;
@@ -190,6 +263,7 @@
   document.addEventListener('visibilitychange', () => { last = null; accumulator = 0; });
 
   function update(dt) {
+    if (state === 'paused') return;
     clock += dt;
     for (const ghost of dashTrail) ghost.time -= dt;
     dashTrail = dashTrail.filter(ghost => ghost.time > 0);
@@ -305,11 +379,12 @@
     segment(p.top + GAP, FLOOR - p.top - GAP, p.top + GAP);
   }
   function drawCat() {
-    const y = state === 'victory' ? cat.y - Math.abs(Math.sin(victoryTime * Math.PI * 4)) * 22 : state === 'ready' ? cat.y + Math.sin(clock * 3) * 7 : cat.y;
+    const visualState = state === 'paused' ? resumeState : state;
+    const y = visualState === 'victory' ? cat.y - Math.abs(Math.sin(victoryTime * Math.PI * 4)) * 22 : visualState === 'ready' ? cat.y + Math.sin(clock * 3) * 7 : cat.y;
     ctx.save();
-    if ((state === 'hit' && Math.floor(hitRemaining * 24) % 2) || (immune > 0 && Math.floor(immune * 12) % 2) || (exitRemaining > 0 && Math.floor(exitRemaining * 24) % 2)) ctx.globalAlpha = 0.35;
-    ctx.translate(cat.x + (state === 'hit' ? Math.sin(hitRemaining * 65) * 4 : 0), y);
-    const flightAngle = state === 'playing' ? Math.max(-0.35, Math.min(0.9, cat.vy / 750)) : -0.08;
+    if ((visualState === 'hit' && Math.floor(hitRemaining * 24) % 2) || (immune > 0 && Math.floor(immune * 12) % 2) || (exitRemaining > 0 && Math.floor(exitRemaining * 24) % 2)) ctx.globalAlpha = 0.35;
+    ctx.translate(cat.x + (visualState === 'hit' ? Math.sin(hitRemaining * 65) * 4 : 0), y);
+    const flightAngle = visualState === 'playing' ? Math.max(-0.35, Math.min(0.9, cat.vy / 750)) : -0.08;
     ctx.rotate(flightAngle * (1 - (dashRemaining > 0 ? dashEnvelope(DASH_DURATION - dashRemaining) : 0)));
     const fur = '#18212c', light = '#303945';
     rect(-26, 1, 12, 7, fur); rect(-29, -8, 7, 15, fur);
@@ -324,6 +399,7 @@
     ctx.restore();
   }
   function render() {
+    const visualState = state === 'paused' ? resumeState : state;
     ctx.setTransform(WORLD_SCALE, 0, 0, WORLD_SCALE, 0, 0);
     ctx.imageSmoothingEnabled = false;
     rect(0, 0, W, H, '#84c9ca');
@@ -377,8 +453,8 @@
       ctx.font = 'bold 24px monospace'; ctx.fillStyle = '#f39598';
       ctx.fillText('♥ +1', cat.x - 25, cat.y - 35 - (0.8 - healTime) * 35); ctx.restore();
     }
-    if (state === 'victory') for (const p of confetti) rect(p.x, p.y, 5, 7, p.color);
-    if (state === 'hit') {
+    if (visualState === 'victory') for (const p of confetti) rect(p.x, p.y, 5, 7, p.color);
+    if (visualState === 'hit') {
       ctx.globalAlpha = hitRemaining / HIT_PAUSE;
       for (const p of particles) rect(p.x, p.y, 5, 5, '#f39598');
       ctx.globalAlpha = 0.18 * hitRemaining / HIT_PAUSE;
