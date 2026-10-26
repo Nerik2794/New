@@ -15,8 +15,8 @@ function game() {
     performance: { now: () => 1000 }, requestAnimationFrame() {}, Math };
   const source = fs.readFileSync(require('node:path').join(__dirname, '../game.js'), 'utf8')
     .replace('  requestAnimationFrame(frame);\n})();', `  globalThis.testGame = {
-      start, update, render, action, frame, cat, activateDash, speed, target, dashEnvelope, collectCoin, nextLevel, victory,
-      get data() { return {state, lives, score, dashAvailable, dashRemaining, dashBoost, exitRemaining, level, levelScore, coinCount, charges, victoryTime, confetti, immune, distance, spawn, pipes, W, H, FLOOR, GAP, PIPE_WIDTH, WORLD_SCALE}; },
+      start, pause, resume, requestPauseAction, cancelPauseAction, confirmPauseAction, update, render, action, frame, cat, activateDash, speed, target, dashEnvelope, collectCoin, nextLevel, victory,
+      get data() { return {state, lives, score, dashAvailable, dashRemaining, dashBoost, exitRemaining, level, levelScore, coinCount, charges, victoryTime, clock, hitRemaining, dashTrail, sparkles, particles, healTime, speedNoticeTime, confetti, immune, distance, spawn, pipes, W, H, FLOOR, GAP, PIPE_WIDTH, WORLD_SCALE}; },
       setLevel(value) { level = value; },
       setPipes(value) { pipes = value; },
       setScore(value) { score = value; },
@@ -88,21 +88,21 @@ test('exact targets, single victory, frozen obstacles, explicit transition and c
   const {g,storage}=game();g.start();
   g.cat.y=1;g.update(1/120);advance(g,.42);
   for(let i=0;i<12;i++)g.collectCoin({x:108,y:265,collected:false});
-  for(let i=0;i<14;i++)passPipe(g);
-  assert.equal(g.data.state,'playing');assert.equal(g.data.levelScore,14);
-  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,15);
+  for(let i=0;i<4;i++)passPipe(g);
+  assert.equal(g.data.state,'playing');assert.equal(g.data.levelScore,4);
+  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,5);
   const confetti=g.data.confetti, distance=g.data.distance, spawn=g.data.spawn;
   g.victory();assert.equal(g.data.confetti,confetti);advance(g,5);
   assert.equal(g.data.distance,distance);assert.equal(g.data.spawn,spawn);assert.equal(g.data.victoryTime,1.5);
   g.action();assert.equal(g.data.state,'victory');
   const lives=g.data.lives, coins=g.data.coinCount, charges=g.data.charges;
   g.nextLevel();assert.equal(g.data.state,'transition');assert.equal(g.data.level,2);
-  assert.equal(g.data.levelScore,0);assert.equal(g.data.score,15);assert.equal(g.data.lives,lives);
+  assert.equal(g.data.levelScore,0);assert.equal(g.data.score,5);assert.equal(g.data.lives,lives);
   assert.equal(g.data.coinCount,coins);assert.equal(g.data.charges,charges);assert.equal(g.data.pipes.length,0);
   advance(g,2);assert.equal(g.data.pipes.length,0);g.action();assert.equal(g.data.state,'playing');
-  for(let i=0;i<16;i++)passPipe(g);assert.equal(g.data.state,'playing');
-  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,32);
-  assert.equal(storage.get('gato-al-vuelo-best'),'32');
+  for(let i=0;i<6;i++)passPipe(g);assert.equal(g.data.state,'playing');
+  passPipe(g);assert.equal(g.data.state,'victory');assert.equal(g.data.score,12);
+  assert.equal(storage.get('gato-al-vuelo-best'),'12');
 });
 test('coin placement, physical pickup, and collision precedence over scoring', () => {
   const {g}=game();g.start();advance(g,.85);
@@ -114,7 +114,7 @@ test('coin placement, physical pickup, and collision precedence over scoring', (
 });
 test('exponential level speed at 1/2/3/10, constant speed and clean restart', () => {
   const {g}=game();g.start();
-  for(const level of [1,2,3,10]){g.setLevel(level);assert.equal(g.target(),15+(level-1)*2);assert.equal(g.speed(),160*1.07**(level-1));g.update(1/120);assert.equal(g.speed(),160*1.07**(level-1))}
+  for(const level of [1,2,3,10]){g.setLevel(level);assert.equal(g.target(),5+(level-1)*2);assert.equal(g.speed(),160*1.07**(level-1));g.update(1/120);assert.equal(g.speed(),160*1.07**(level-1))}
   g.start();assert.equal(g.speed(),160);assert.equal(g.data.dashAvailable,true);
 });
 test('dash lasts one second with fixed horizontal position and bounded smooth clearance', () => {
@@ -144,7 +144,7 @@ test('dash pickups and points occur once, victory cancels dash, only next level 
   g.setPipes([pipe]);g.update(1/120);assert.equal(g.data.coinCount,1);
   for(let i=0;i<40;i++){g.cat.y=280;g.cat.vy=0;g.update(1/120)}
   assert.equal(g.data.coinCount,1);assert.equal(g.data.score,1);
-  for(let i=0;i<14;i++)passPipe(g);
+  for(let i=0;i<4;i++)passPipe(g);
   assert.equal(g.data.state,'victory');assert.equal(g.data.dashRemaining,0);
   g.activateDash();assert.equal(g.data.dashAvailable,false);
   g.nextLevel();assert.equal(g.data.dashAvailable,true);
@@ -181,4 +181,43 @@ test('fast world movement cannot skip a coin or count the same pipe twice', () =
   g.setPipes([pipe]);g.update(1/120);
   assert.equal(g.data.coinCount,1);assert.equal(g.data.score,1);
   g.update(1/120);assert.equal(g.data.coinCount,1);assert.equal(g.data.score,1);
+});
+test('real pipe displacement over one simulated second at levels 1, 5, 9', () => {
+  for(const level of [1,5,9]){
+    const {g,nodes}=game();g.start();g.setLevel(level);
+    // Coin HUD refresh also exercises the displayed normal-speed source.
+    g.collectCoin({x:0,y:0,collected:false});
+    const pipe={x:400,top:200,passed:false,coin:{x:427,y:280,collected:false}};
+    g.setPipes([pipe]);g.setImmune(2);
+    for(let i=0;i<120;i++){g.cat.y=280;g.cat.vy=0;g.update(1/120)}
+    const displacement=400-pipe.x, expected=160*1.07**(level-1);
+    assert.ok(Math.abs(displacement-expected)<1e-8,`level ${level}: moved ${displacement}, expected ${expected}`);
+    assert.ok(Math.abs((427-pipe.coin.x)-displacement)<1e-8);
+    assert.equal(nodes.speedValue.textContent,`VELOCIDAD: ${(displacement/160).toFixed(2)}x`);
+    console.log(`level ${level}: ${displacement.toFixed(6)} world units / simulated second`);
+  }
+});
+test('pause freezes complete gameplay state, inputs and timers; resume drops elapsed frame time', () => {
+  const {g}=game();g.start();g.setImmune(1);g.collectCoin({x:108,y:280,collected:false});g.activateDash();advance(g,.15);
+  g.pause();const frozen=JSON.stringify({cat:g.cat,data:g.data});
+  advance(g,20);g.action();g.activateDash();g.render();
+  assert.equal(JSON.stringify({cat:g.cat,data:g.data}),frozen);
+  g.frame(1000000);g.resume();const position=g.cat.y;
+  g.frame(2000000);assert.equal(g.cat.y,position,'no wall-clock jump on resume');
+  const remaining=g.data.dashRemaining;g.update(1/120);assert.ok(g.data.dashRemaining<remaining);
+});
+test('pause freezes damage, supports cancellation, confirmed restart/quit and preserves record', () => {
+  const {g,nodes,storage}=game();g.start();passPipe(g);passPipe(g);
+  g.cat.y=0;g.update(1/120);assert.equal(g.data.state,'hit');
+  g.pause();const damage=g.data.hitRemaining;advance(g,10);assert.equal(g.data.hitRemaining,damage);
+  g.requestPauseAction('restart');assert.equal(g.data.state,'paused');g.cancelPauseAction();g.resume();assert.equal(g.data.state,'hit');
+  advance(g,.42);g.pause();g.requestPauseAction('restart');g.confirmPauseAction();
+  assert.equal(g.data.state,'playing');assert.equal(g.data.level,1);assert.equal(g.data.score,0);
+  assert.equal(g.data.lives,3);assert.equal(g.data.coinCount,0);assert.equal(g.data.charges,0);
+  assert.equal(g.data.dashAvailable,true);assert.equal(g.data.immune,0);assert.equal(g.data.pipes.length,0);
+  assert.equal(storage.get('gato-al-vuelo-best'),'2');
+  g.pause();g.requestPauseAction('quit');g.confirmPauseAction();
+  assert.equal(g.data.state,'ready');assert.equal(nodes.overlay.hidden,false);
+  assert.equal(storage.get('gato-al-vuelo-best'),'2');g.action();assert.equal(g.data.state,'playing');
+  g.setLevel(9);assert.equal(g.target(),21);
 });
